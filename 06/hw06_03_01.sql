@@ -1,6 +1,6 @@
-DROP DATABASE IF EXISTS homework_5_3;
-CREATE DATABASE homework_5_3;
-USE homework_5_3;
+DROP DATABASE IF EXISTS homework6_2;
+CREATE DATABASE homework6_2;
+USE homework6_2;
 
 DROP TABLE IF EXISTS users;
 CREATE TABLE users (
@@ -717,110 +717,23 @@ INSERT INTO `profiles` VALUES
 ('99','f','1996-10-09','99','1981-09-24 02:19:44','Lake Lora'),
 ('100','f','1990-02-11','100','1974-08-23 15:31:47','Port Mable'); 
 
-/*Получите друзей пользователя с id=1
--- (решение задачи с помощью представления “друзья”)*/
-CREATE OR REPLACE VIEW friends AS
-SELECT 
-  u.id as user_id,
-  concat(u.firstname, " ", u.lastname) as user_fullName,
-  f.id as friend_id,
-  concat(f.firstname, " ", f.lastname) as friend_fullName
-FROM users u
-JOIN friend_requests fr 
-	ON u.id = fr.initiator_user_id 
-	OR u.id = fr.target_user_id
-JOIN users f 
-	ON (u.id = fr.initiator_user_id AND f.id = fr.target_user_id)
-	OR (u.id = fr.target_user_id AND f.id = fr.initiator_user_id)
-WHERE fr.status = 'approved'
-AND u.id = 1;
+-- 4. Создать функцию, вычисляющей коэффициент популярности пользователя (по количеству друзей)
+DROP FUNCTION IF EXISTS calculate_popularity;
+DELIMITER $$
 
-SELECT friend_id, friend_fullName
-FROM friends
-WHERE user_id = 1;
+CREATE FUNCTION calculate_popularity(user_id INT) RETURNS FLOAT DETERMINISTIC
+BEGIN
+    DECLARE friend_count INT;
 
--- Создайте представление, в котором будут выводится все сообщения, в которых принимал участие пользователь с id = 1.
+    -- Получаем количество друзей пользователя
+    SELECT COUNT(*) INTO friend_count
+    FROM friend_requests
+    WHERE (initiator_user_id = user_id OR target_user_id = user_id)
+    AND status = 'approved';
 
-CREATE OR REPLACE VIEW user_messages AS
-SELECT  
-	 u.id as "ID пользователя", 
-	 CONCAT(u.firstname, ' ', u.lastname) as "Фамилия Имя отправителя", 
-	 m.body as "Текст сообщения",
-	 m.created_at as "Дата и время сообщения",
-	 CONCAT(u_recipient.firstname, ' ', u_recipient.lastname) as "Фамилия имя получателя"
-FROM users u
-JOIN messages m ON (m.from_user_id = u.id OR m.to_user_id = u.id)
-JOIN users u_recipient ON (m.to_user_id = u_recipient.id)
-WHERE u.id = 1;
+    RETURN friend_count;
+END $$
 
-select * from user_messages;
+DELIMITER ;
 
--- Получите список медиафайлов пользователя с количеством лайков(media m, likes l ,users u)
--- тут представление нужно делать? сделал его
-CREATE OR REPLACE VIEW user_media_likes AS
-SELECT 
-  m.id as media_id,
-  m.filename,
-  u.id as user_id,
-  CONCAT(u.firstname, ' ', u.lastname) as full_name,
-  COUNT(l.media_id) as likes_count
-FROM media m
-JOIN users u ON m.user_id = u.id
-LEFT JOIN likes l ON m.id = l.media_id
-GROUP BY m.id, m.filename, u.id, full_name;
-
-select *
-from user_media_likes
-where user_id = 1; 
-
--- Получите количество групп у пользователей
--- сделал без представления, по схеме как-то непонятно идет связь, 
--- по логике ведь так должно быть:
-SELECT 
-  u.id as user_id,
-  CONCAT(u.firstname, ' ', u.lastname) as full_name,
-  COUNT(DISTINCT uc.community_id) as group_count
-FROM users u
-LEFT JOIN users_communities uc ON u.id = uc.user_id
-GROUP BY u.id
-ORDER BY COUNT(DISTINCT uc.community_id) desc;
-
--- 1. Создайте представление, в которое попадет информация о пользователях 
--- (имя, фамилия, город и пол), которые не старше 20 лет.
-CREATE OR REPLACE VIEW young_users AS
-SELECT 
-	u.id,
-	CONCAT(u.firstname, ' ', u.lastname) as full_name, 
-    p.hometown, 
-    p.gender
-FROM users u
-JOIN profiles p on u.id = p.user_id
-WHERE birthday >= CURDATE() - INTERVAL 20 YEAR;
-
-SELECT *
-from young_users;
-
--- 2. Найдите кол-во, отправленных сообщений каждым пользователем и выведите ранжированный список пользователей, 
--- указав имя и фамилию пользователя, количество отправленных сообщений и место в рейтинге 
--- (первое место у пользователя с максимальным количеством сообщений) . (используйте DENSE_RANK)
-SELECT 
-		full_name, 
-        message_count, 
-        DENSE_RANK() OVER (ORDER BY message_count DESC) AS ranking
-FROM (
-    SELECT 
-			CONCAT(u.firstname, ' ', u.lastname) as full_name,
-            COUNT(*) AS message_count
-    FROM users u
-    JOIN messages m ON (u.id = m.from_user_id OR u.id = m.to_user_id)
-    GROUP BY u.id
-) AS ranked_users;
-
--- 3. Выберите все сообщения, отсортируйте сообщения по возрастанию даты отправления (created_at) 
--- и найдите разницу дат отправления между соседними сообщениями, получившегося списка. (используйте LEAD или LAG)
-SELECT 
-  body as "Текст сообщения",
-  created_at as "Дата и время написания",
-  TIMEDIFF(LEAD(created_at) OVER (ORDER BY created_at), created_at) as time_diff
-FROM messages
-ORDER BY created_at;
+SELECT calculate_popularity(1);

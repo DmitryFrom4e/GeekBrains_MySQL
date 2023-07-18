@@ -1,6 +1,6 @@
-DROP DATABASE IF EXISTS homework_5_3;
-CREATE DATABASE homework_5_3;
-USE homework_5_3;
+DROP DATABASE IF EXISTS homework6_2;
+CREATE DATABASE homework6_2;
+USE homework6_2;
 
 DROP TABLE IF EXISTS users;
 CREATE TABLE users (
@@ -717,110 +717,95 @@ INSERT INTO `profiles` VALUES
 ('99','f','1996-10-09','99','1981-09-24 02:19:44','Lake Lora'),
 ('100','f','1990-02-11','100','1974-08-23 15:31:47','Port Mable'); 
 
-/*Получите друзей пользователя с id=1
--- (решение задачи с помощью представления “друзья”)*/
-CREATE OR REPLACE VIEW friends AS
-SELECT 
-  u.id as user_id,
-  concat(u.firstname, " ", u.lastname) as user_fullName,
-  f.id as friend_id,
-  concat(f.firstname, " ", f.lastname) as friend_fullName
-FROM users u
-JOIN friend_requests fr 
-	ON u.id = fr.initiator_user_id 
-	OR u.id = fr.target_user_id
-JOIN users f 
-	ON (u.id = fr.initiator_user_id AND f.id = fr.target_user_id)
-	OR (u.id = fr.target_user_id AND f.id = fr.initiator_user_id)
-WHERE fr.status = 'approved'
-AND u.id = 1;
+-- 3. Создать процедуру, которая решает следующую задачу
+-- Выбрать для одного пользователя 5 пользователей в случайной комбинации, которые удовлетворяют хотя бы одному критерию:
+-- а) из одного города
+-- б) состоят в одной группе
+-- в) друзья друзей
 
-SELECT friend_id, friend_fullName
-FROM friends
-WHERE user_id = 1;
+DROP PROCEDURE IF EXISTS select_matching_users;
+DELIMITER $$
+CREATE PROCEDURE select_matching_users
+(
+		IN search_id INT
+)
+BEGIN
+    DECLARE city VARCHAR(100);
+    DECLARE group_name VARCHAR(100);
+    DECLARE i INT;
+    DECLARE random_user INT;
 
--- Создайте представление, в котором будут выводится все сообщения, в которых принимал участие пользователь с id = 1.
+    -- Получаю город пользователя
+	SELECT hometown INTO city FROM profiles WHERE user_id = search_id;
 
-CREATE OR REPLACE VIEW user_messages AS
-SELECT  
-	 u.id as "ID пользователя", 
-	 CONCAT(u.firstname, ' ', u.lastname) as "Фамилия Имя отправителя", 
-	 m.body as "Текст сообщения",
-	 m.created_at as "Дата и время сообщения",
-	 CONCAT(u_recipient.firstname, ' ', u_recipient.lastname) as "Фамилия имя получателя"
-FROM users u
-JOIN messages m ON (m.from_user_id = u.id OR m.to_user_id = u.id)
-JOIN users u_recipient ON (m.to_user_id = u_recipient.id)
-WHERE u.id = 1;
+    SET i = 0;
+	
+    -- Создаю временную таблицу для вывода результатов
+    CREATE TEMPORARY TABLE IF NOT EXISTS temp_users (user_id INT);
 
-select * from user_messages;
+    WHILE i < 6 DO
+        SET @random = RAND();
 
--- Получите список медиафайлов пользователя с количеством лайков(media m, likes l ,users u)
--- тут представление нужно делать? сделал его
-CREATE OR REPLACE VIEW user_media_likes AS
-SELECT 
-  m.id as media_id,
-  m.filename,
-  u.id as user_id,
-  CONCAT(u.firstname, ' ', u.lastname) as full_name,
-  COUNT(l.media_id) as likes_count
-FROM media m
-JOIN users u ON m.user_id = u.id
-LEFT JOIN likes l ON m.id = l.media_id
-GROUP BY m.id, m.filename, u.id, full_name;
+        IF @random < 1/3 THEN
+            -- Нахожу случайного пользователя из тех, кто живет в том же городе
+            SET random_user = (
+                SELECT user_id
+                FROM `profiles`
+                WHERE hometown = city 
+                AND user_id != search_id
+                AND user_id NOT IN (SELECT user_id FROM temp_users)
+                ORDER BY RAND() 
+                LIMIT 1
+            );
 
-select *
-from user_media_likes
-where user_id = 1; 
+        ELSEIF @random < 2/3 THEN
+            -- Нахожу случайного пользователя из тех, кто состоит в той же группе
+            SET random_user = (
+                SELECT user_id
+                FROM users_communities uc
+                WHERE uc.community_id IN (SELECT community_id FROM users_communities WHERE user_id = search_id)
+                AND uc.user_id != search_id 
+                AND uc.user_id NOT IN (SELECT user_id FROM temp_users)
+                ORDER BY RAND()
+                LIMIT 1
+            );
 
--- Получите количество групп у пользователей
--- сделал без представления, по схеме как-то непонятно идет связь, 
--- по логике ведь так должно быть:
-SELECT 
-  u.id as user_id,
-  CONCAT(u.firstname, ' ', u.lastname) as full_name,
-  COUNT(DISTINCT uc.community_id) as group_count
-FROM users u
-LEFT JOIN users_communities uc ON u.id = uc.user_id
-GROUP BY u.id
-ORDER BY COUNT(DISTINCT uc.community_id) desc;
+        ELSE
+            -- Нахожу случайного друга друга
+            SET random_user = (
+                SELECT friend_user_id
+                FROM (
+                    SELECT fr1.initiator_user_id AS friend_user_id
+                    FROM friend_requests fr1
+                    WHERE fr1.`status` = 'approved' AND fr1.target_user_id = search_id
+                    AND fr1.initiator_user_id NOT IN (SELECT user_id FROM temp_users)
+                    UNION
+                    SELECT fr2.target_user_id AS friend_user_id
+                    FROM friend_requests fr2
+                    WHERE fr2.`status` = 'approved' AND fr2.initiator_user_id = search_id
+                    AND fr2.target_user_id NOT IN (SELECT user_id FROM temp_users)
+                ) fr
+                ORDER BY RAND()
+                LIMIT 1
+            );
+        END IF;
 
--- 1. Создайте представление, в которое попадет информация о пользователях 
--- (имя, фамилия, город и пол), которые не старше 20 лет.
-CREATE OR REPLACE VIEW young_users AS
-SELECT 
-	u.id,
-	CONCAT(u.firstname, ' ', u.lastname) as full_name, 
-    p.hometown, 
-    p.gender
-FROM users u
-JOIN profiles p on u.id = p.user_id
-WHERE birthday >= CURDATE() - INTERVAL 20 YEAR;
+        SET i = i + 1;
 
-SELECT *
-from young_users;
+        -- Вставляю выбранного пользователя во временную таблицу
+        INSERT INTO temp_users (user_id) VALUES (random_user);
+    END WHILE;
 
--- 2. Найдите кол-во, отправленных сообщений каждым пользователем и выведите ранжированный список пользователей, 
--- указав имя и фамилию пользователя, количество отправленных сообщений и место в рейтинге 
--- (первое место у пользователя с максимальным количеством сообщений) . (используйте DENSE_RANK)
-SELECT 
-		full_name, 
-        message_count, 
-        DENSE_RANK() OVER (ORDER BY message_count DESC) AS ranking
-FROM (
-    SELECT 
-			CONCAT(u.firstname, ' ', u.lastname) as full_name,
-            COUNT(*) AS message_count
+    -- Вывожу выбранных пользователей
+    SELECT u.*
     FROM users u
-    JOIN messages m ON (u.id = m.from_user_id OR u.id = m.to_user_id)
-    GROUP BY u.id
-) AS ranked_users;
+    INNER JOIN temp_users tu 
+    ON u.id = tu.user_id;
 
--- 3. Выберите все сообщения, отсортируйте сообщения по возрастанию даты отправления (created_at) 
--- и найдите разницу дат отправления между соседними сообщениями, получившегося списка. (используйте LEAD или LAG)
-SELECT 
-  body as "Текст сообщения",
-  created_at as "Дата и время написания",
-  TIMEDIFF(LEAD(created_at) OVER (ORDER BY created_at), created_at) as time_diff
-FROM messages
-ORDER BY created_at;
+    -- Удаляю временную таблицу
+    DROP TEMPORARY TABLE IF EXISTS temp_users;
+
+END $$
+DELIMITER ;
+
+CALL select_matching_users(1);
